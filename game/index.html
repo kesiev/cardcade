@@ -1,0 +1,1936 @@
+<html>
+<head>
+	<meta name="viewport" content="width=device-width, user-scalable=no">
+	<meta property="og:image" content="https://www.kesiev.com/cardcade/screenshot.png">
+	<meta property="og:description" content="A collection of classic arcade games turned into card games.">
+	<script type="text/javascript" src="games.js"></script>
+	<title>Cardcade</title>
+	<style>
+		BODY {
+			overflow: hidden;
+			padding:0;
+			margin:0;
+			background-color: #000;
+		}
+	</style>
+</head>
+<body onload="run()">
+	<img src="sprites.png" style="display:none" id="sprites">
+</body>
+<script>
+
+const
+	PALETTE={
+		white:"#fff",
+		yellow:"#ff0",
+		purple:"#f0f",
+		gray:"#555",
+		red:"#f00",
+		blue:"#00f",
+		green:"#0f0",
+		black:"#000"
+	}
+
+function MyCanvas(width,height,screen) {
+	var
+		fitTimer=0,
+		fitTimes=5,
+		triggers=0,
+		canvas=document.createElement("canvas"),
+		ctx=canvas.getContext("2d");
+
+	canvas.onmousedown=function(e) {
+		if (triggers&&triggers.onDown)
+			triggers.onDown(e.offsetX,e.offsetY);
+	}
+
+	this.canvas=canvas;
+
+	this.setTriggers=function(newtriggers) {
+		triggers=newtriggers;
+	}
+
+	this.resize=function(newwidth,newheight) {
+		width=this.width=canvas.width=newwidth;
+		height=this.height=canvas.height=newheight;
+		this.hWidth=Math.floor(newwidth/2);
+		this.hHeight=Math.floor(newheight/2);
+		ctx.webkitImageSmoothingEnabled =
+			ctx.imageSmoothingEnabled =
+			ctx.mozImageSmoothingEnabled =
+			ctx.oImageSmoothingEnabled =
+			ctx.msImageSmoothingEnabled=
+			false;
+	}
+
+	this.line=function(color,x1,y1,x2,y2) {
+		ctx.strokeStyle=color;
+		ctx.lineWidth=1;
+		ctx.beginPath();
+		ctx.moveTo(x1+0.5, y1+0.5);
+		ctx.lineTo(x2+0.5, y2+0.5);
+		ctx.stroke();
+	}
+
+	this.rect=function(color,x1,y1,width,height) {
+		this.line(color,x1,y1,x1+width,y1);
+		this.line(color,x1,y1,x1,y1+height);
+		this.line(color,x1,y1+height-1,x1+width,y1+height-1);
+		this.line(color,x1+width-1,y1,x1+width-1,y1+height);
+	}
+
+	this.fillRect=function(color,x1,y1,width,height) {
+		ctx.fillStyle = color;
+		ctx.fillRect(x1, y1, width, height);
+	}
+
+	this.blit=function(source,x1,y1,width,height,x2,y2) {
+		ctx.drawImage(source,x1,y1,width,height,x2,y2,width,height);
+	}
+
+	this.print=function(font,color,x1,y1,text,alignment) {
+		text=text+"";
+		var
+			len=text.length;
+
+		switch (alignment) {
+			case 1:{
+				x1-=(len*font.letterSpacing)/2;
+				break;
+			}
+		}
+		x1=Math.floor(x1);
+		y1=Math.floor(y1);
+		x2=font.x1;
+		y2=font.y1+(color*font.letterHeight);
+		for (var i=0;i<len;i++)
+			this.blit(font.sprites,x2+((text.charCodeAt(i)-32)*font.letterWidth),y2,font.letterWidth,font.letterHeight,x1+(i*font.letterSpacing),y1);
+	}
+
+	this.appendTo=function(node) {
+		node.appendChild(canvas);
+	}
+
+	this.resize(width,height);
+
+	function fit() {
+
+		var
+			screenWidth=document.body.clientWidth;
+			screenHeight=document.body.clientHeight;
+			ratio=Math.min(
+				Math.floor(screenWidth/width*10)/10,
+				Math.floor(screenHeight/height*10)/10
+			),
+			x=Math.floor((screenWidth-(ratio*width))/2);
+			y=Math.floor((screenHeight-(ratio*height))/2);
+		
+		canvas.style.position="absolute";
+		canvas.style.transformOrigin="0 0";
+		canvas.style.transform="translate("+x+"px,"+y+"px) scale("+ratio+")";
+
+		if (fitTimer) clearTimeout(fitTimer);
+		if (fitTimes>0) {
+			fitTimes--;
+			fitTimer=setTimeout(fit,200);
+		}
+	}
+
+	if (screen) {
+		this.appendTo(document.body);
+		window.onresize=()=>{
+			fitTimes=5;
+			fit();	
+		}
+		fit();
+	}
+
+}
+
+function Card(data) {
+	var
+		history=[],
+		depth=data.size.depth,
+		width=data.size.width,
+		height=data.size.height;
+
+	this.data=data;
+	this.x=this.dx=-100;
+	this.y=this.dy=300;
+	this.z=this.dz=0;
+	this.visible=0;
+	this.grid=0;
+	this.gridX=0;
+	this.gridY=0;
+	this.animating=false;
+
+	this.removeFromGrid=function() {
+		if (this.grid) {
+			this.grid.removeCard(this.gridX,this.gridY,this);
+			this.grid=0;
+		}
+	}
+
+	this.addToGrid=function(grid,x,y) {
+		this.removeFromGrid();
+		this.grid=grid;
+		this.gridX=x;
+		this.gridY=y;
+	}
+
+	this.updatePositon=function(pos) {
+		this.dx=pos.x;
+		this.dy=pos.y;
+		this.dz=pos.z;
+		this.visible=pos.visible;
+	}
+
+	this.render=function(canvas) {
+		var
+			draw=false;
+
+		this.animating=false;
+		if (this.x!=this.dx) {
+			var delta=(this.dx-this.x)/4;
+			if (Math.abs(delta)<2) this.x=this.dx;
+			else this.x+=delta;
+			this.animating=true;
+			draw=true;
+		}
+		if (this.y!=this.dy) {
+			var delta=(this.dy-this.y)/4;
+			if (Math.abs(delta)<2) this.y=this.dy;
+			else this.y+=delta;
+			this.animating=true;
+			draw=true;
+		}
+		if (this.z!=this.dz) {
+			var delta=(this.dz-this.z)/10;
+			if (Math.abs(delta)<0.1) this.z=this.dz;
+			else this.z+=delta;
+			this.animating=true;
+			draw=true;
+		}
+		if (draw||this.visible)
+			canvas.blit(data._canvas.canvas,0,0,width,height,Math.floor(this.x),Math.floor(this.y-(this.z*depth)))			
+	}
+
+	this.serialize=function() {
+		return this.data.id;
+	}
+
+}
+
+function CardGrid(canvas,config) {
+	var
+		grid=[],
+		icon=config.icon||0,
+		x1=config.x1||0,
+		y1=config.y1||0,
+		height=config.height||10,
+		width=config.width||10,
+		cardWidth=config.cardSize.width,
+		cardHeight=config.cardSize.height,
+		verticalSpacing=config.verticalSpacing||3,
+		horizontalSpacing=config.horizontalSpacing||3,
+		drawCardsLimit=config.drawCardsLimit||3,
+		verticalCardStackSpacing=config.verticalCardStackSpacing||2,
+		// --- Math
+		horizontalCardSpace=cardWidth+horizontalSpacing,
+		verticalCardSpace=cardHeight+verticalSpacing;
+
+	for (var h=0;h<height;h++) {
+		var
+			row=[];
+
+		for (var w=0;w<width;w++)
+			row.push([]);
+		grid.push(row);
+	}
+
+	function sorter(a,b) {
+		if ((a.data.priority||0)<(b.data.priority||0)) return -1; else
+		if ((a.data.priority||0)>(b.data.priority||0)) return 1;
+		else return 0;
+	}
+
+	this.updateCardPosition=function(card,log) {
+		if (
+			card.grid==this
+		) {
+			var
+				cell=this.getCell(card.gridX,card.gridY),
+				cellHead=Math.max(0,cell.length-drawCardsLimit),
+				z=cell.indexOf(card)-cellHead,
+				visible=true,
+				x=x1+(horizontalCardSpace*card.gridX),
+				y=y1+(verticalCardSpace*card.gridY);
+
+			if (z<0) {
+				z=0;
+				visible=false;
+			}
+			card.updatePositon({
+				visible:visible,
+				z:z,
+				x:x,
+				y:y
+			});
+		}
+	}
+
+	this.updateCellCardsPosition=function(cell) {
+		cell.forEach(card=>this.updateCardPosition(card,"add"));
+	}
+
+	this.width=width;
+	this.height=height;
+
+	this.getCell=function(x,y) {
+		return grid[y]&&grid[y][x];
+	}
+
+	this.getGridCoord=function(x,y) {
+		var
+			gx=(x-x1)/horizontalCardSpace;
+			gy=(y-y1)/verticalCardSpace,
+			rx=Math.floor(gx),
+			ry=Math.floor(gy);
+		var cell=this.getCell(rx,ry);
+		if (cell) return {gridX:rx,gridY:ry,cardX:gx-rx,cardY:gy-ry};
+	}
+
+	this.cellIsEmpty=function(x,y) {
+		var
+			cell=this.getCell(x,y);
+
+		return !cell||!cell.length;
+	}
+
+	this.shuffleCards=function(x,y) {
+		var
+			cell=this.getCell(x,y),
+			tmp,p1;
+
+		if (cell) {
+			for (var t=0;t<cell.length;t++)
+				for (var i=0;i<cell.length;i++) {
+					p1=Math.floor(Math.random()*cell.length);
+					tmp=cell[i];
+					cell[i]=cell[p1];
+					cell[p1]=tmp;
+				}
+			this.updateCellCardsPosition(cell);				
+		}
+	}
+
+	this.addCard=function(card,x,y) {
+		var cell=0;
+		if (card) {
+			cell=this.getCell(x,y);
+			if (cell) {
+				cell.push(card);
+				card.addToGrid(this,x,y);
+				if (config.sorted) cell.sort(sorter);
+				this.updateCellCardsPosition(cell);				
+			}
+		}
+		return cell;
+	}
+
+	this.pickCard=function(x,y) {
+		var
+			cell=this.getCell(x,y);
+
+		if (cell&&cell.length) {
+			var pop=cell.pop();
+			this.updateCellCardsPosition(cell);
+			return pop;
+		} else return 0
+	}
+
+	this.moveCard=function(card,x,y) {
+		card.removeFromGrid();
+		return this.addCard(card,x,y);
+	}
+
+	this.mergeCells=function(fromcell,x,y) {
+		var
+			cell=this.getCell(x,y);
+
+		if (cell)
+			while (fromcell.length) this.addCard(fromcell[0],x,y);
+
+		return cell;
+	}
+
+	this.removeCard=function(x,y,card) {
+		var
+			cell;
+
+		if (cell=this.getCell(x,y)) {
+			var pos=cell.indexOf(card);
+			if (pos!=-1) cell.splice(pos,1);
+			this.updateCellCardsPosition(cell);				
+		}
+	}
+
+	this.renderBackground=function() {
+		if (config.outlineLabel!==undefined)
+			canvas.blit(RESOURCES.sprites,config.outlineLabel*77,166,76,6,x1-4,y1-14);
+		for (var y=0;y<height;y++)
+			for (var x=0;x<width;x++) {
+				var
+					px=x1+(horizontalCardSpace*x),
+					py=y1+(verticalCardSpace*y);
+				canvas.rect(PALETTE.gray,px,py,cardWidth,cardHeight);
+				if (icon) canvas.blit(RESOURCES.sprites,icon.x1,icon.y1,icon.width,icon.height,px+icon.x2,py+icon.y2)
+			}
+	}
+
+	this.renderCards=function() {
+		for (var y=0;y<height;y++)
+			for (var x=0;x<width;x++) {
+				var
+					cell=this.getCell(x,y);
+				cell.forEach(card=>card.render(canvas));
+			}
+	}
+
+	this.serialize=function() {
+		var out={};
+
+		for (var y=0;y<height;y++) {
+			for (var x=0;x<width;x++) {
+				var
+					serializeCell=[],
+					cell=this.getCell(x,y)
+				cell.forEach(card=>{
+					serializeCell.push(card.serialize());
+				})
+				if (serializeCell.length) {
+					if (!out[y]) out[y]={};
+					out[y][x]=serializeCell;
+				}
+			}
+		}
+
+		return out;
+	}
+
+	this.unserialize=function(data) {
+		for (var y=0;y<height;y++) {
+			for (var x=0;x<width;x++) {
+				if (data[y]&&data[y][x])
+					data[y][x].forEach(card=>{
+						this.addCard(CARDS.create(card),x,y);
+					})				
+			}
+		}
+	}
+
+}
+
+function CardGarbage(canvas,config) {
+	var
+		x1=config.x1||0,
+		y1=config.y1||0,
+		garbage=[];
+
+	this.addCard=function(card) {
+		card.removeFromGrid();
+		card.updatePositon({visible:true,z:0,x:x1,y:y1});
+		if (garbage.indexOf(card)==-1) garbage.push(card);
+	}
+
+	this.renderCards=function() {
+		garbage=garbage.filter(card=>{
+			card.render(canvas);
+			return card.animating;
+		});
+	}
+
+}
+
+function Cards() {
+
+	var cards={};
+
+	this.clear=function() {
+		cards={};
+	}
+
+	this.add=function(addcards) {
+		for (var id in addcards)
+			cards[id]=addcards[id];
+	}
+
+	this.create=function(id) {
+		if (!cards[id]) debugger;
+		return new Card(cards[id]);
+	}
+
+	this.initialize=function() {
+		for (var id in cards) {
+			var
+				card=cards[id],
+				canvas=card._canvas=new MyCanvas(card.size.width,card.size.height);
+			card.id=id;
+			canvas.blit(
+				RESOURCES.sprites,card.size.backgroundX+(card.backgroundId?card.backgroundId*card.size.backgroundGapX:0),
+				card.size.backgroundY,
+				card.size.width,card.size.height,0,0
+			);
+			if (card.labels) {
+				var sector=Math.floor((card.size.height-2)/card.labels.length);
+				for (var i=0;i<card.labels.length;i++) 
+					if (card.labels[i].labelColor) {
+						canvas.fillRect(
+							card.labels[i].labelColor,
+							card.size.labelPositions[i].x,card.size.labelPositions[i].y,
+							card.size.labelWidth,card.size.labelHeight
+						);
+						canvas.blit(
+							RESOURCES.sprites,
+							card.size.labelX+(card.size.labelXGap*card.labels[i].labelId),card.size.labelY,
+							card.size.labelWidth,card.size.labelHeight,
+							card.size.labelPositions[i].x,card.size.labelPositions[i].y
+						);
+					}
+			}
+		}
+	}
+
+}
+
+function Dimmer(width,height,color) {
+	var
+		canvas=new MyCanvas(width,height);
+
+	for (var x=0;x<width;x++)
+		for (var y=0;y<height;y++)
+			if ((x+y)%2) canvas.fillRect(color,x,y,1,1);
+
+	this.dim=function(dest,x1,y1,width,height) {
+		dest.blit(canvas.canvas,0,0,width,height,x1,y1);
+	}
+
+	this.dimAll=function(dest) {
+		dest.blit(canvas.canvas,0,0,dest.width,dest.height,0,0);
+	}
+}
+
+function Transition(type) {
+
+	var
+		timer=0,
+		gap=8,
+		times=Math.floor(SCREEN.width/gap);
+
+	this.isEnded=false;
+
+	this.render=function() {
+		
+		if (timer<1) {
+
+			switch (type) {
+				case 0:{ // Fade out
+					for (var i=0;i<times;i++)
+						SCREEN.fillRect(PALETTE.black,i*gap,0,Math.floor(gap*timer),SCREEN.height);
+					break;
+				}
+
+				case 1:{ // Fade in
+					for (var i=0;i<times;i++)
+						SCREEN.fillRect(PALETTE.black,i*gap,0,gap-Math.floor(gap*timer),SCREEN.height);
+					break;
+				}
+			}
+
+			timer+=0.1;
+
+		} else {
+
+			switch (type) {
+				case 0:{ // Fade out
+					SCREEN.fillRect(PALETTE.black,0,0,SCREEN.width,SCREEN.height);
+					break;
+				}
+			}
+
+			if (!this.isEnded) {
+				timer+=0.1;
+				if (timer>2) this.isEnded=true;
+			}
+
+			return true;
+
+		}
+		
+	}
+
+}
+
+function Ui() {
+
+	var
+		timeout;
+
+	this.fps=30;
+	this.mspf=Math.ceil(1000/this.fps);
+	this.buttonHeight=40;
+
+	this.setBackgroundColor=function(color) {
+		document.body.style.backgroundColor=color;
+	}
+
+	this.cancelFrame=function() {
+		if (timeout) {
+			cancelTimeout(timeout);
+			timeout=0;
+		}
+	}
+
+	this.scheduleFrame=function(cb) {
+		this.cancelFrame();
+		setTimeout(cb,this.mspf);
+	}
+
+	this.drawWindow=function(canvas,color,x,y,width,height) {
+		canvas.fillRect(color,x,y,width,height);
+		canvas.rect(PALETTE.white,x,y,width,height);
+		canvas.fillRect(PALETTE.white,x,y+height-1,width,3);
+	}
+
+	this.drawButton=function(canvas,x,y,width,label) {
+		this.drawWindow(canvas,PALETTE.black,x,y,width,this.buttonHeight);
+		canvas.fillRect(PALETTE.white,x,y+this.buttonHeight-1,width,3);
+		canvas.print(FONTS.large,FONTCOLOR.yellow,x+(width/2),y+11,label,1);
+	}
+
+	this.getPixelLength=function(font,text) {
+		return text.length*font.letterSpacing+(font.letterWidth-font.letterSpacing);
+	}
+
+	this.renderRichText=function(width,text) {
+		
+		var
+			render=[],
+			y=0;
+
+		text.forEach(renderline=>{
+			
+			if (renderline.image) {
+
+				y+=4;
+				render.push({type:1,source:renderline.image,destination:{x:Math.floor((width-renderline.image.width)/2),y:y}});
+				y+=renderline.image.height+8;
+
+			} else {
+
+				var
+					words=renderline.text.toUpperCase().split(" "),
+					line="",
+					font=FONTS.small,
+					fontColor=FONTCOLOR.white,
+					x=Math.floor(width/2),
+					align=1;
+
+				switch (renderline.format) {
+					case "title":{
+						font=FONTS.large;
+						fontColor=FONTCOLOR.gray;
+						break;
+					}
+				}
+
+				if (renderline.color) fontColor=renderline.color;
+
+				words.forEach(word=>{
+					if (UI.getPixelLength(font,line+" "+word)>width) {
+						render.push({font:font,fontColor:fontColor,x:x,y:y,text:line,align:align});
+						line=word;
+						y+=font.letterHeight+2;
+					} else line+=(line?" ":"")+word;
+				});
+				if (line) {
+					render.push({font:font,fontColor:fontColor,x:x,y:y,text:line,align:align});
+					y+=font.letterHeight+2;
+				}
+				y+=4;
+			}
+		});
+
+		y-=4;
+
+		var
+			canvas=new MyCanvas(width,y);
+
+		render.forEach(line=>{
+			switch (line.type) {
+				case 1:{
+					canvas.blit(RESOURCES.sprites,line.source.x,line.source.y,line.source.width,line.source.height,line.destination.x,line.destination.y);
+					break;
+				}
+				default:{
+					canvas.print(line.font,line.fontColor,line.x,line.y,line.text,line.align)		
+				}
+			}
+			
+		});
+
+		return canvas;
+	}
+}
+
+
+function Match(gameData,load) {
+
+	CARDS.clear();
+	CARDS.add(gameData.cards);
+	CARDS.initialize();
+
+	AUDIO.unlockPlayOnce();
+
+	const
+		POSITIONS={
+			decks:SCREEN.height-193,
+			hand:SCREEN.height-85,
+			handLabel:SCREEN.height-93,
+			pauseButtonX1:SCREEN.width,
+			pauseButtonX2:360,
+			pauseButtonHeight:42,
+			pauseButtonY:SCREEN.height-265,
+			pauseMenu:SCREEN.height-320,
+			continueButtonY:240,
+			saveQuitButtonY:180,
+			logoY:180+(42*gameData.logoId)
+		},
+		MODE={
+			play:0,
+			paused:1,
+			gameOver:2
+		};
+
+	var
+		pauseButtonX=POSITIONS.pauseButtonX1,
+		transition=new Transition(1),
+		turnCard,
+		gameCleared=false,
+		gameOverMessage="",
+		animating=false,
+		mode=MODE.play,
+		playing=true,
+		score=0,
+		highScore=STORAGE.loadHighScore(gameData);
+
+	function getCardFromDeck(deck,discard) {
+		var
+			card=deck.pickCard(0,0),
+			cell=deck.getCell(0,0);
+
+		if (!cell.length) {
+			deck.mergeCells(discard.getCell(0,0),0,0);
+			deck.shuffleCards(0,0);
+		}
+		AUDIO.playOnce("card");
+		return card;
+	}
+
+	function runAI(skipConditions) {
+		var card=getCardFromDeck(aiDeck,aiDiscard);
+		runCard(card);
+		if (!skipConditions) runCard(turnCard,2);
+		aiDiscard.addCard(card,0,0);
+	}
+
+	function getter(as) {
+		if (as.bonusDeck)
+			return bonusDeck.getCell(0,0);
+		else {
+			var subject=[];
+			for (var y=0;y<cardGrid.height;y++) 
+				for (var x=0;x<cardGrid.width;x++) {
+					var cell=cardGrid.getCell(x,y);
+					cell.forEach(card=>{
+						var pick=false;
+						if (as.type)
+							card.data.type.forEach(type=>{
+								if (as.type.indexOf(type)!=-1) pick=true;
+							})
+						if (pick&&(subject.indexOf(card)==-1))
+							subject.push(card);
+					})
+				}
+		}
+		return subject;
+	}
+
+	function runCondition(line,fromcard,tocard,playerslot) {
+		if (line._break) debugger;
+		if (line._log) console.warn(line._log);
+
+		if (line.playAudio) AUDIO.playOnce(line.playAudio);
+
+		if (line.gameOver) {
+			setGameover(false,line.gameOver);
+			return true;
+		} else if (line.gameClear) {
+			setGameover(true,line.gameClear);
+			return true;
+		}
+		else {
+
+			if (line.draw)
+				cardHand.addCard(getCardFromDeck(playerDeck,playerDiscard),playerslot,0);
+
+			if (line.setScore) score=line.setScore;
+			if (line.sumScore) score+=line.sumScore;
+			if (line.runAI) {
+				for (var c=0;c<line.runAI.times;c++)
+					runAI(line.runAI.skipConditions);
+			}
+			if (line.removeThis) {
+				AUDIO.playOnce("card");
+				cardGarbage.addCard(fromcard);
+			}
+			if (line.removeThat) {
+				AUDIO.playOnce("card");
+				cardGarbage.addCard(tocard);
+			}
+
+			if (line.earnCard) {
+				AUDIO.playOnce("card");
+				var card=bonusDeck.pickCard(0,0);
+				if (card) playerDiscard.addCard(card,0,0);
+			}
+
+			if (line.spawn) {
+				var
+					x=fromcard.gridX+((line.delta&&line.delta.x)||0),
+					y=fromcard.gridY+((line.delta&&line.delta.y)||0);
+				line.spawn.forEach(type=>{
+					cardGrid.addCard(CARDS.create(type),x,y)
+				});
+				AUDIO.playOnce("card");
+			}
+
+			if (line.moveBy) {
+
+				var
+					cancelMove=false,
+					dx=(line.moveBy.gridX||0),
+					dy=(line.moveBy.gridY||0);							
+
+				if (line.moveBy.ifCollidesWith) {
+
+					var
+						runThen=false;	
+
+					line.moveBy.ifCollidesWith.forEach(collision=>{
+						var
+							dest=getter(collision.with),
+							run=collision.else,
+							targets=[];
+
+						dest.forEach(destcard=>{
+
+							if (
+								(destcard.grid===fromcard.grid)&&
+								(destcard.gridX==fromcard.gridX+dx)&&
+								(destcard.gridY==fromcard.gridY+dy)
+							) {
+								run=collision.then;
+								targets.push(destcard);
+							}
+						});
+
+						if (run) {
+							console.log("running",run);
+							if (!targets.length) targets=[{}];
+							targets.forEach(targetcard=>{
+								if (run.cancelMove) cancelMove=true;
+								runCondition(run,fromcard,targetcard,playerslot);
+							})
+						}
+					});
+					
+				}
+
+				if (!cancelMove) {
+					AUDIO.playOnce("card");						
+					if (!cardGrid.moveCard(fromcard,fromcard.gridX+dx,fromcard.gridY+dy))
+						cardGarbage.addCard(fromcard);
+
+				}
+			}
+
+			if (line.moveTo) {
+
+				var
+					cancelMove=false,
+					x=(line.moveTo.gridX===undefined?fromcard.gridX:line.moveTo.gridX),
+					y=(line.moveTo.gridY===undefined?fromcard.gridY:line.moveTo.gridY);
+
+				if (line.moveTo.ifCollidesWith) {
+
+					var
+						runThen=false;	
+
+					line.moveTo.ifCollidesWith.forEach(collision=>{
+						var
+							dest=getter(collision.with),
+							run=collision.else,
+							targets=[];
+
+						dest.forEach(destcard=>{
+
+							if (
+								(destcard.grid===fromcard.grid)&&
+								(destcard.gridX==x)&&
+								(destcard.gridY==y)
+							) {
+								run=collision.then;
+								targets.push(destcard);
+							}
+						});
+
+						if (run) {
+							console.log("running",run);
+							if (!targets.length) targets=[{}];
+							targets.forEach(targetcard=>{
+								if (run.cancelMove) cancelMove=true;
+								runCondition(run,fromcard,targetcard,playerslot);
+							})
+						}
+					});
+					
+				}
+
+				if (!cancelMove) {
+					AUDIO.playOnce("card");						
+					if (!cardGrid.moveCard(fromcard,x,y))
+						cardGarbage.addCard(fromcard);
+				}
+			}
+
+			if (line.replaceThisWith) {
+				if (fromcard.data.id!=line.replaceThisWith) {
+					AUDIO.playOnce("card");	
+					cardGrid.addCard(CARDS.create(line.replaceThisWith),fromcard.gridX,fromcard.gridY);
+					cardGarbage.addCard(fromcard);
+				}
+			}
+
+			if (line.replaceThatWith) {
+				if (tocard.data.id!=line.replaceThatWith) {
+					AUDIO.playOnce("card");	
+					cardGrid.addCard(CARDS.create(line.replaceThatWith),tocard.gridX,tocard.gridY);
+					cardGarbage.addCard(tocard);
+				}
+			}
+
+			if (line.sub)
+				runCode(fromcard,playerslot,line.sub);
+
+		}
+
+	}
+
+	function runCode(card,playerslot,code) {
+		for (var i=0;i<code.length;i++) {
+			
+			// Get subject
+			var
+				line=code[i],
+				subject;
+
+		
+			if (line.as) subject=getter(line.as);
+			else if (line.at) subject=[line.at];
+			else if (line.atRange) {
+				subject=[];
+				for (var y=line.atRange.y1;y<=line.atRange.y2;y++)
+					for (var x=line.atRange.x1;x<=line.atRange.x2;x++)
+						subject.push({gridX:x,gridY:y});
+			} else subject=[{}];
+
+			if (line.into)
+				subject=subject.filter(item=>{
+					return (
+						(item.gridX>=line.into.x1)&&
+						(item.gridX<=line.into.x2)&&
+						(item.gridY>=line.into.y1)&&
+						(item.gridY<=line.into.y2)
+					);
+				})
+
+			subject.forEach(card=>runCondition(line,card,0,playerslot));
+			
+			if (line.ifIsEmpty&&!subject.length)
+				runCondition(line.ifIsEmpty,0,0,playerslot);
+
+			if (line.ifNotEmpty&&subject.length)
+				runCondition(line.ifNotEmpty,0,0,playerslot);
+
+			if (line.ifCollidesWith) {
+				var
+					dest=getter(line.ifCollidesWith);
+				subject.forEach(fromcard=>{
+					dest.forEach(tocard=>{
+						if (
+							(fromcard.grid===tocard.grid)&&
+							(fromcard.gridX===tocard.gridX)&&
+							(fromcard.gridY===tocard.gridY)
+						)
+							runCondition(line.then,fromcard,tocard,playerslot);
+					})
+				});						
+			}
+
+			if (!playing) break;
+
+			console.log("--",subject);
+		}
+	}
+
+	function runCard(card,side,playerslot) {
+		if (playing&&card) {
+			if (!side) side=0;
+			console.log(card);
+			var code=card.data.labels[side].do;
+			if (code) runCode(card,playerslot,code);
+		}
+
+	}
+
+	function playPlayerCard(coord) {
+		if (playing) {
+			var cell=cardHand.getCell(coord.gridX,0);
+			if (cell.length) {
+				AUDIO.playOnce("card");				
+				var card=cardHand.pickCard(coord.gridX,0);
+				runCard(card,card.data.labels.length>1?coord.cardY>0.5?1:0:0,coord.gridX);
+				runCard(turnCard,2);
+				playerDiscard.addCard(card,0,0);
+			} else {
+				cardHand.addCard(getCardFromDeck(playerDeck,playerDiscard),coord.gridX,0);
+				runAI();			
+			}
+			runCard(turnCard,1);
+			runCard(turnCard,2);
+		}
+	}
+
+	function render() {
+		if (pauseButtonX>POSITIONS.pauseButtonX2) pauseButtonX--;
+
+		SCREEN.fillRect(PALETTE.black,0,0,SCREEN.width,SCREEN.height);
+		SCREEN.blit(RESOURCES.sprites,0,180,400,425,0,0);
+		SCREEN.blit(RESOURCES.sprites,402,POSITIONS.logoY,400,42,0,0);
+		SCREEN.blit(RESOURCES.sprites,0,173,384,6,6,POSITIONS.handLabel);
+		SCREEN.blit(RESOURCES.sprites,71,110,43,POSITIONS.pauseButtonHeight,pauseButtonX,POSITIONS.pauseButtonY);
+		cardGrid.renderBackground();
+		playerDeck.renderBackground();
+		playerDiscard.renderBackground();
+		bonusDeck.renderBackground();
+		aiDeck.renderBackground();
+		aiDiscard.renderBackground();
+		cardHand.renderBackground();
+
+		cardGarbage.renderCards();
+		cardGrid.renderCards();
+		bonusDeck.renderCards();
+		playerDeck.renderCards();
+		playerDiscard.renderCards();
+		aiDeck.renderCards();
+		aiDiscard.renderCards();
+		cardHand.renderCards();
+
+
+		switch (mode) {
+			case MODE.paused:{
+				if (animating) {
+					var dif=pauseY-POSITIONS.pauseMenu;
+					if (dif>1) pauseY-=dif/4;
+					else {
+						pauseY=POSITIONS.pauseMenu;
+						animating=false;
+					}					
+				}
+				drawPauseMenu(pauseY);
+				break;
+			}
+			case MODE.gameOver:{
+				if (animating) {
+					var dif=pauseY-POSITIONS.pauseMenu;
+					if (dif>1) pauseY-=dif/4;
+					else {
+						pauseY=POSITIONS.pauseMenu;
+						animating=false;
+					}					
+				}
+				drawGameOverMenu(pauseY);
+				break;
+			}
+			case MODE.play:{
+				if (animating) {
+					var dif=SCREEN.height-pauseY;
+					if (dif>1) pauseY+=dif/4;
+					else {
+						pauseY=SCREEN.height;
+						animating=false;
+					}
+					drawPauseMenu(pauseY);
+				}
+				break;
+			}
+		}
+
+		if (transition) {
+			transition.render();
+			if (transition.isEnded) {
+				if (playing) {
+					transition=0;
+					UI.scheduleFrame(render);
+				} else STATEMANAGER.manageSignal({action:"selectGame"});
+			} else UI.scheduleFrame(render);
+		} else UI.scheduleFrame(render);
+
+	}
+
+	function drawPauseMenu(y) {
+		DIMMER.dimAll(SCREEN);
+		UI.drawWindow(SCREEN,PALETTE.black,25,y,350,310);
+		SCREEN.print(FONTS.large,FONTCOLOR.yellow,SCREEN.hWidth,y+20,"GAME PAUSED",1);
+		SCREEN.print(FONTS.small,FONTCOLOR.white,SCREEN.hWidth,y+60,"YOUR SCORE",1);
+		SCREEN.print(FONTS.large,FONTCOLOR.white,SCREEN.hWidth,y+80,score,1);
+		SCREEN.print(FONTS.small,FONTCOLOR.white,SCREEN.hWidth,y+120,"HIGH SCORE",1);
+		SCREEN.print(FONTS.large,FONTCOLOR.white,SCREEN.hWidth,y+140,highScore,1);
+		UI.drawButton(SCREEN,50,y+POSITIONS.saveQuitButtonY,300,"SAVE + QUIT");
+		UI.drawButton(SCREEN,50,y+POSITIONS.continueButtonY,300,"CONTINUE");
+	}
+
+	function drawGameOverMenu(y) {
+		DIMMER.dimAll(SCREEN);
+		UI.drawWindow(SCREEN,PALETTE.black,25,y,350,310);
+		SCREEN.print(FONTS.small,gameCleared?FONTCOLOR.green:FONTCOLOR.red,SCREEN.hWidth,y+20,gameCleared?"GAME CLEAR":"GAME OVER",1);
+		SCREEN.print(FONTS.large,gameCleared?FONTCOLOR.green:FONTCOLOR.red,SCREEN.hWidth,y+32,gameOverMessage,1);
+		SCREEN.print(FONTS.small,FONTCOLOR.white,SCREEN.hWidth,y+72,"YOUR SCORE",1);
+		SCREEN.print(FONTS.large,FONTCOLOR.white,SCREEN.hWidth,y+92,score,1);
+		SCREEN.print(FONTS.small,FONTCOLOR.white,SCREEN.hWidth,y+132,"HIGH SCORE",1);
+		SCREEN.print(FONTS.large,FONTCOLOR.white,SCREEN.hWidth,y+152,highScore,1);
+		if (score>highScore)
+			SCREEN.print(FONTS.large,FONTCOLOR.green,SCREEN.hWidth,y+202,"NEW HIGH SCORE!",1);
+		else {
+			SCREEN.print(FONTS.large,FONTCOLOR.gray,SCREEN.hWidth,y+188,"BETTER LUCK",1);
+			SCREEN.print(FONTS.large,FONTCOLOR.gray,SCREEN.hWidth,y+208,"NEXT TIME!",1);
+		}
+		UI.drawButton(SCREEN,50,y+POSITIONS.continueButtonY,300,"END GAME");
+	}
+
+	function setPause(set) {
+		AUDIO.play("card");
+		if (set) {
+			mode=MODE.paused;
+			animating=true;
+			pauseY=SCREEN.height;
+		} else {
+			mode=MODE.play;
+			animating=true;
+		}
+	}
+
+	function setGameover(clear,message) {
+		playing=false;
+		gameCleared=clear;
+		gameOverMessage=message;
+		if (score>highScore) {
+			STORAGE.saveHighScore(gameData,score);
+			AUDIO.play("hiscore");
+		}
+		STORAGE.deleteGame(gameData);
+		mode=MODE.gameOver;
+		animating=true;
+		pauseY=SCREEN.height;
+	}
+
+	function serialize() {
+		return {
+			score:score,
+			cardGrid:cardGrid.serialize(),
+			bonusDeck:bonusDeck.serialize(),
+			playerDeck:playerDeck.serialize(),
+			playerDiscard:playerDiscard.serialize(),
+			aiDeck:aiDeck.serialize(),
+			aiDiscard:aiDiscard.serialize(),
+			cardHand:cardHand.serialize()
+		}
+	}
+
+	function saveQuit(clear,message) {
+		STORAGE.saveGame(gameData,serialize());
+		playing=0;
+		transition=new Transition(0);
+	}
+
+	function fillDeck(deck,cards) {
+		cards.forEach(card=>{
+			var amount=card.amount||1;
+			for (var i=0;i<amount;i++)
+				deck.addCard(CARDS.create(card.card),0,0);
+		})		
+	}
+
+	var cardGarbage=new CardGarbage(SCREEN,{
+		x1:-100,
+		y1:210
+	});	
+
+	var cardGrid=new CardGrid(SCREEN,{
+		sorted:true,
+		x1:39,
+		y1:53,
+		cardSize:CARDSIZES.small,
+		horizontalSpacing:2,
+		verticalSpacing:4,
+		width:9,
+		height:9
+	});	
+	var bonusDeck=new CardGrid(SCREEN,{
+		outlineLabel:4,
+		x1:-35,
+		y1:POSITIONS.decks,
+		cardSize:CARDSIZES.normalSingle,
+		horizontalSpacing:2,
+		verticalSpacing:2,
+		width:1,
+		height:1
+	});
+	var playerDeck=new CardGrid(SCREEN,{
+		outlineLabel:0,
+		x1:47,
+		y1:POSITIONS.decks,
+		cardSize:CARDSIZES.normalSingle,
+		horizontalSpacing:2,
+		verticalSpacing:2,
+		width:1,
+		height:1
+	});
+	var playerDiscard=new CardGrid(SCREEN,{
+		outlineLabel:1,
+		x1:129,
+		y1:POSITIONS.decks,
+		cardSize:CARDSIZES.normalSingle,
+		horizontalSpacing:2,
+		verticalSpacing:2,
+		width:1,
+		height:1
+	});
+	var aiDeck=new CardGrid(SCREEN,{
+		outlineLabel:3,
+		x1:319,
+		y1:POSITIONS.decks,
+		cardSize:CARDSIZES.normalSingle,
+		horizontalSpacing:2,
+		verticalSpacing:2,
+		width:1,
+		height:1
+	});
+	var aiDiscard=new CardGrid(SCREEN,{
+		outlineLabel:2,
+		x1:237,
+		y1:POSITIONS.decks,
+		cardSize:CARDSIZES.normalSingle,
+		horizontalSpacing:2,
+		verticalSpacing:2,
+		width:1,
+		height:1
+	});	
+	var cardHand=new CardGrid(SCREEN,{
+		x1:10,
+		y1:POSITIONS.hand,
+		icon:{x1:468,y1:73,width:25,height:35,x2:22,y2:28},
+		cardSize:CARDSIZES.normalSingle,
+		horizontalSpacing:7,
+		verticalSpacing:2,
+		width:5,
+		height:1
+	});
+
+	this.run=function() {
+
+		UI.setBackgroundColor(PALETTE.gray);
+
+		SCREEN.setTriggers({
+			onDown:function(x,y) {
+				AUDIO.unlockPlayOnce();
+				if (!animating) {
+					switch (mode) {
+						case MODE.paused:{
+							if ((y>pauseY+POSITIONS.continueButtonY)&&(y<pauseY+POSITIONS.continueButtonY+UI.buttonHeight))
+								setPause(false);
+							else if ((y>pauseY+POSITIONS.saveQuitButtonY)&&(y<pauseY+POSITIONS.saveQuitButtonY+UI.buttonHeight)) {
+								AUDIO.play("select");
+								saveQuit();
+							}
+							break;
+						}
+						case MODE.gameOver:{
+							if ((y>pauseY+POSITIONS.continueButtonY)&&(y<pauseY+POSITIONS.continueButtonY+UI.buttonHeight)) {
+								AUDIO.play("select");
+								transition=new Transition(0);
+							}
+							break;
+						}
+						default:{
+							if (
+								x>POSITIONS.pauseButtonX2&&(
+									(y>POSITIONS.pauseButtonY)&&(y<POSITIONS.pauseButtonY+POSITIONS.pauseButtonHeight))
+							) setPause(true);
+							var coord=cardHand.getGridCoord(x,y);
+							if (coord) playPlayerCard(coord);
+						}
+					}
+				}
+			}
+		});
+
+		turnCard=CARDS.create("_turncard");
+
+		if (load) {
+			var data=STORAGE.loadGame(gameData);
+
+			score=data.score;
+			cardGrid.unserialize(data.cardGrid);
+			bonusDeck.unserialize(data.bonusDeck);
+			playerDeck.unserialize(data.playerDeck);
+			playerDiscard.unserialize(data.playerDiscard);
+			aiDeck.unserialize(data.aiDeck);
+			aiDiscard.unserialize(data.aiDiscard);
+			cardHand.unserialize(data.cardHand);
+
+			AUDIO.playOnce("card");
+
+		} else {
+
+			fillDeck(bonusDeck,gameData.decks.bonusDeck)
+			bonusDeck.shuffleCards(0,0);
+
+			fillDeck(playerDeck,gameData.decks.playerDeck)
+			playerDeck.shuffleCards(0,0);
+
+			fillDeck(aiDeck,gameData.decks.aiDeck)
+			aiDeck.shuffleCards(0,0);
+
+			this.dealCards();
+
+			// Initialize game
+			runCard(turnCard,0);
+
+		}
+
+		
+
+		render();
+		
+	}
+
+	this.dealCards=function() {
+		for (var i=0;i<cardHand.width;i++)
+			if (cardHand.cellIsEmpty(i,0))
+				cardHand.addCard(getCardFromDeck(playerDeck,playerDiscard),i,0);
+	}
+
+}
+
+function GameSelector() {
+	var
+		signal=0,
+		transition=new Transition(1),
+		timer=0,
+		selectedGameId=0,
+		selectedGame=0,
+		selectedGameManual=0,
+		selectedGameHighScore=0,
+		selectedGameCanLoad=0,
+		newGameButtonY=0,
+		continueButtonY=0,
+		POSITIONS={
+			logoY:20,
+			selectButtonY:SCREEN.height-130,
+			rightButtonX:SCREEN.width-74,
+			leftButtonX:-5,
+			leftButtonAreaX:79,
+			middleButtonY:SCREEN.height-100,
+			upperButtonY:SCREEN.height-130,
+			lowerButtonY:SCREEN.height-70
+		};
+
+	function setGame(id) {
+		AUDIO.play("card");
+		selectedGameId=id;
+		selectedGame=GAMES[id];
+		selectedGameManual=UI.renderRichText(350,selectedGame.manual);
+		selectedGameHighScore=STORAGE.loadHighScore(selectedGame);
+		selectedGameCanLoad=STORAGE.canLoadGame(selectedGame);
+		if (selectedGameCanLoad) {
+			newGameButtonY=POSITIONS.upperButtonY;
+			continueButtonY=POSITIONS.lowerButtonY;
+		} else
+			newGameButtonY=POSITIONS.middleButtonY;
+	}
+
+	function render() {
+		
+		var y=8;
+
+		timer+=0.1;
+
+		SCREEN.fillRect(PALETTE.black,0,0,SCREEN.width,SCREEN.height);
+		SCREEN.blit(RESOURCES.sprites,402,180+(43*selectedGame.logoId),400,42,0,y+Math.sin(timer)*3); y+=54;
+		SCREEN.print(FONTS.small,FONTCOLOR.white,SCREEN.hWidth,y,"HIGH SCORE",1); y+=14;
+		SCREEN.print(FONTS.large,FONTCOLOR.white,SCREEN.hWidth,y,selectedGameHighScore,1); y+=30;
+
+		selectedGame.description.forEach(line=>{
+			SCREEN.print(FONTS.large,FONTCOLOR.cyan,SCREEN.hWidth,y,line,1); y+=20;
+		});
+
+		y+=15;
+
+		SCREEN.blit(selectedGameManual.canvas,0,0,selectedGameManual.width,selectedGameManual.height,25,y);
+		
+
+		if (selectedGameCanLoad)
+			UI.drawButton(SCREEN,90,continueButtonY,220,"CONTINUE");
+		UI.drawButton(SCREEN,90,newGameButtonY,220,"NEW GAME");
+		SCREEN.blit(RESOURCES.sprites,804,180,79,103,POSITIONS.rightButtonX+Math.sin(timer)*5,POSITIONS.selectButtonY);
+		SCREEN.blit(RESOURCES.sprites,884,180,79,103,POSITIONS.leftButtonX-Math.sin(timer)*5,POSITIONS.selectButtonY);
+
+		if (transition) {
+			transition.render();
+			if (transition.isEnded)
+				if (signal) STATEMANAGER.manageSignal(signal);
+				else {
+					transition=0;
+					UI.scheduleFrame(render);
+				}
+			else UI.scheduleFrame(render);
+		} else UI.scheduleFrame(render);
+		
+	}
+
+	this.run=function() {
+		setGame(STORAGE.getLastPlayed());
+
+		UI.setBackgroundColor(PALETTE.black);
+
+		SCREEN.setTriggers({
+			onDown:function(x,y) {
+				if (!transition) {
+					if (x<POSITIONS.leftButtonAreaX) {
+						if (y>POSITIONS.selectButtonY)
+							if (selectedGameId) setGame(selectedGameId-1);
+							else setGame(GAMES.length-1);
+					} else if (x>POSITIONS.rightButtonX) {
+						if (y>POSITIONS.selectButtonY)
+							setGame((selectedGameId+1)%GAMES.length);
+					} else if (selectedGameCanLoad&&(y>continueButtonY)&&(y<continueButtonY+UI.buttonHeight)) {
+						STORAGE.setLastPlayed(selectedGameId);
+						AUDIO.play("select");
+						transition=new Transition(0);
+						signal={game:selectedGame,action:"continue"};
+					} else if ((y>newGameButtonY)&&(y<newGameButtonY+UI.buttonHeight)) {
+						STORAGE.setLastPlayed(selectedGameId);
+						AUDIO.play("select");
+						transition=new Transition(0);
+						signal={game:selectedGame,action:"new"};
+					}
+				}
+			}
+		});
+
+		render();
+	}
+
+}
+
+function Storage() {
+
+	const
+		prefix="CARDCADE_";
+
+	function canLoad(key) {
+		return !!localStorage[key];
+	}
+
+	function load(key) {
+		if (canLoad(key))
+			return JSON.parse(localStorage[key]);
+	}
+
+	function save(key,value) {
+		localStorage[key]=JSON.stringify(value);
+	}
+
+	function del(key) {
+		delete localStorage[key];
+	}
+
+	this.deleteGame=function(gameData) { return del(prefix+"GAME_"+gameData.id); }
+	this.canLoadGame=function(gameData) { return canLoad(prefix+"GAME_"+gameData.id); }
+	this.loadGame=function(gameData) { return load(prefix+"GAME_"+gameData.id); }
+	this.loadHighScore=function(gameData) { return load(prefix+"HI_"+gameData.id)||0; }
+	this.saveGame=function(gameData,data) { return save(prefix+"GAME_"+gameData.id,data); }
+	this.saveHighScore=function(gameData,score) { return save(prefix+"HI_"+gameData.id,score); }
+	this.setLastPlayed=function(gameId) { localStorage[prefix+"LAST"]=gameId; }
+	this.getLastPlayed=function() { return localStorage[prefix+"LAST"]?localStorage[prefix+"LAST"]*1:0; }
+
+}
+
+function Title() {
+	var
+		transition=new Transition(1),
+		signal=0,
+		lettersrows=[[0,1,2,3],[0,1,3,4]];
+		timer=0,		
+		POSITIONS={
+			manualButtonY:SCREEN.height-180,
+			playButtonY:SCREEN.height-120,
+			credits1Y:SCREEN.height-52,
+			credits2Y:SCREEN.height-30,
+		};
+
+	function render() {
+		
+		var y=20;
+
+		timer+=0.1;
+
+		SCREEN.fillRect(PALETTE.black,0,0,SCREEN.width,SCREEN.height);
+
+		SCREEN.print(FONTS.large,FONTCOLOR.yellow,SCREEN.hWidth,y,"KESIEV NORIMAKI'S",1); y+=50;
+
+		SCREEN.fillRect(PALETTE.yellow,0,y+30,SCREEN.width,126);
+
+		lettersrows.forEach((row,rowpos)=>{
+			row.forEach((letter,letterpos)=>{
+				SCREEN.blit(RESOURCES.sprites,113+(71*letter),73,70,92,63+(letterpos*68),(rowpos*100)+y+Math.sin(timer+letterpos*0.2)*10);
+			});
+		});
+
+		SCREEN.print(FONTS.large,FONTCOLOR.white,SCREEN.hWidth,POSITIONS.credits1Y,"BY KESIEV - (C) 2020",1);
+		SCREEN.print(FONTS.small,FONTCOLOR.white,SCREEN.hWidth,POSITIONS.credits2Y,"KESIEV.COM/CARDCADE - GITHUB.COM/KESIEV/CARDCADE",1);
+
+		UI.drawButton(SCREEN,90,POSITIONS.playButtonY,220,"PLAY");
+		UI.drawButton(SCREEN,90,POSITIONS.manualButtonY,220,"MANUAL");
+
+
+		if (transition) {
+			transition.render();
+			if (transition.isEnded)
+				if (signal) STATEMANAGER.manageSignal(signal);
+				else {
+					transition=0;
+					UI.scheduleFrame(render);
+				}
+			else UI.scheduleFrame(render);
+		} else UI.scheduleFrame(render);
+		
+	}
+
+	this.run=function() {
+
+		UI.setBackgroundColor(PALETTE.black);
+
+		SCREEN.setTriggers({
+			onDown:function(x,y) {				
+				if (!transition) {
+					if ((y>POSITIONS.playButtonY)&&(y<POSITIONS.playButtonY+UI.buttonHeight)) {
+						transition=new Transition(0);
+						signal={action:"selectGame"};
+						AUDIO.play("beep");
+					} else if ((y>POSITIONS.manualButtonY)&&(y<POSITIONS.manualButtonY+UI.buttonHeight)) {
+						transition=new Transition(0);
+						signal={action:"manual"};
+						AUDIO.play("select");
+					}
+				}
+			}
+		});
+
+		render();
+	}
+
+}
+
+function Manual() {
+	var
+		page=0,
+		manual=[
+			UI.renderRichText(350,[
+				{format:"title",text:"Story"},
+				{format:"line",text:"Videogames in 1970 failed to conquer the market due to their stressful pace, annoying psychedelic blinking lights, and exorbitant costs."},
+				{image:{x:1097,y:284,width:346,height:130}},
+				{format:"line",text:"Board games had a huge boom instead, becoming a mainstream phenomenon and attracting game designers all over the world. The Cardcade system quickly became a popular cheap way to make and distribute many of them: they are just two decks of cards and a one-sheet game manual packed in a colorful cardboard box."},
+				{image:{x:1097,y:415,width:346,height:130}},
+				{format:"line",color:FONTCOLOR.yellow,text:"After these 12 years, I want to prove that videogames can be better than Cardcades with this free collection of unofficial ports! Why? Because you don't have to move the cards by hand anymore, the score and the high score are automatically kept and you can play with realistic sound effects!"}
+			]),
+			UI.renderRichText(350,[
+				{format:"title",text:"How to play"},
+				{format:"line",text:"All Cardcade games are played the same way:"},
+				{format:"line",color:FONTCOLOR.purple,text:"Click/tap one of the two halves of a card in your hand: the selected half effect is applied to the game board and the card will end in your discard pile."},
+				{format:"line",color:FONTCOLOR.cyan,text:"Click/tap an empty space of your hand: draw a new card from your deck to fill the space."},
+				{image:{x:803,y:284,width:292,height:311}},
+				{format:"line",text:"When any deck runs out of cards its discard pile is shuffled to form a new deck."},
+				{format:"line",text:"Specific game rules are explained by the game selection screen... but you already know it! They are the same Cardcade games you used to play as a kid!"}
+			])
+		],
+		lastPage=manual.length-1,
+		transition=new Transition(1),
+		signal=0,
+		POSITIONS={
+			backButtonY:SCREEN.height-70
+		};
+
+	AUDIO.play("card");
+
+	function render() {
+		
+		var y=20;
+
+		SCREEN.fillRect(PALETTE.black,0,0,SCREEN.width,SCREEN.height);
+		SCREEN.blit(manual[page].canvas,0,0,manual[page].width,manual[page].height,25,10);
+
+		UI.drawButton(SCREEN,90,POSITIONS.backButtonY,220,page==lastPage?"MAIN MENU":"NEXT PAGE");
+
+
+		if (transition) {
+			transition.render();
+			if (transition.isEnded)
+				if (signal) STATEMANAGER.manageSignal(signal);
+				else {
+					transition=0;
+					UI.scheduleFrame(render);
+				}
+			else UI.scheduleFrame(render);
+		} else UI.scheduleFrame(render);
+		
+	}
+
+	this.run=function() {
+
+		UI.setBackgroundColor(PALETTE.black);
+
+		SCREEN.setTriggers({
+			onDown:function(x,y) {				
+				if (!transition) {
+					if ((y>POSITIONS.backButtonY)&&(y<POSITIONS.backButtonY+UI.buttonHeight)) {
+						if (page<lastPage) {
+							AUDIO.play("card");
+							page++;
+						} else {
+							transition=new Transition(0);
+							signal={action:"title"};
+							AUDIO.play("select");
+						}
+					}
+				}
+			}
+		});
+
+		render();
+	}
+
+}
+
+var AudioEngine={
+	ready:false,
+	audioContext:0,
+	channels:{},
+	NOISETIMES:["attack","sustain","decay","release"],
+	NOISEWAVES:{
+		whitenoise:function(v,i,p) { return Math.floor((i-1)/(p/2))!=Math.floor(i/(p/2))?Math.random()*2-1:v },
+		square:function(v,i,p) { return ((Math.floor(i/(p/2))%-2)*-2)+1 },
+		sine:function(v,i,p) { return Math.sin(i*6.28/p) },
+		saw:function(v,i,p) { return ((v+1+(2/p)) % 2) - 1},
+		triangle:function(v,i,p) { return Math.abs((i % p - (p/2))/p*4)-1 },
+		tangent:function(v,i,p) { 
+			v= 0.15*Math.tan(i/p*3.14);
+			if (v<-1) v=-1;
+			if (v>1) v=1;
+			return v;
+		},
+		whistle:function(v,i,p) { return 0.75 * Math.sin(i/p*6.28) + 0.25 * Math.sin(40 *3.14 * i/p) },
+		breaker:function(v,i,p) {
+			v=(i/p) + 0.8660;
+			v=v - Math.floor(v);
+			return -1 + 2 * Math.abs(1 - v*v*2);
+		}
+	},
+	clone:function(a) { return JSON.parse(JSON.stringify(a)); },
+	request:function() {
+		if (!this.ready) {
+			try {
+				if (window.webkitAudioContext) this.audioContext=new window.webkitAudioContext();
+				else if (window.AudioContext) this.audioContext=new window.AudioContext();
+				this.ready=true;
+			} catch(e) {
+				this.audioContext=0;
+				this.ready=false;
+			}
+		}
+	},
+	generateNoise:function(parms,frequency,sample) {
+		if (!sample) sample={noise:true,parms:parms,frequency:frequency};
+		if (this.ready) {
+
+			parms=this.clone(parms);
+
+			var sampleRate = this.audioContext.sampleRate,data={};
+			for (var a in parms) if (parms[a]!==undefined) data[a]=parms[a];
+			for (var i=0;i<this.NOISETIMES.length;i++) data[this.NOISETIMES[i]]*=sampleRate;
+			if (frequency!==undefined) data.frequency=frequency;
+
+			var out,bits,steps,attackDecay=data.attack+data.decay,
+				attackSustain=attackDecay+data.sustain,
+				samplePitch = sampleRate/data.frequency,
+				sampleLength = attackSustain+data.release,	
+
+				tremolo = .9,
+				value = .9,
+				envelope = 0;    
+
+			var buffer = this.audioContext.createBuffer(2,sampleLength,sampleRate);
+
+			for(var i=0;i<2;i++) {
+				var channel = buffer.getChannelData(i),
+					jump1=sampleLength*data.frequencyJump1onset,
+				jump2=sampleLength*data.frequencyJump2onset;
+				for(var j=0; j<buffer.length; j++) {
+					// ADSR Generator
+					value = this.NOISEWAVES[data.wave](value,j,samplePitch);
+					if (j<=data.attack) envelope=j/data.attack;
+					else if (j<=attackDecay) envelope=-(j-attackDecay)/data.decay*(1-data.limit)+data.limit;
+					if (j>attackSustain) envelope=(-(j-attackSustain)/data.release+1)*data.limit;
+					// Tremolo
+					tremolo = this.NOISEWAVES.sine(value,j,sampleRate/data.tremoloFrequency)*data.tremoloDepth+(1-data.tremoloDepth);
+					out = value*tremolo*envelope*0.9;
+					// Bit crush
+					if (data.bitCrush||data.bitCrushSweep) {
+						bits = Math.round(data.bitCrush + j / sampleLength * data.bitCrushSweep);
+						if (bits<1) bits=1;
+						if (bits>16) bits=16;
+						steps=Math.pow(2,bits);
+						out=-1 + 2 * Math.round((0.5 + 0.5 * out) * steps) / steps;
+					}
+
+					// Done!
+					if (!out) out=0;
+					if(out>1) out= 1;
+					if(out<-1) out = -1;
+
+					channel[j]=out;
+					// Frequency jump
+					if (j>=jump1) { samplePitch*=1-data.frequencyJump1amount; jump1=sampleLength }
+					if (j>=jump2) { samplePitch*=1-data.frequencyJump2amount; jump2=sampleLength }
+					// Pitch
+					samplePitch-= data.pitch;
+				}
+			}
+			sample.buffer=buffer;
+		}
+		return sample;		
+	},
+	createAudioChannel:function(volume,channel) {
+		if (!channel) channel={volume:volume};
+		if (this.audioContext) {
+			var audioOut;
+			audioOut=this.audioContext.createGain();
+			audioOut.connect(this.audioContext.destination);
+			audioOut.gain.value=volume;
+			channel.audioOut=audioOut;
+		}
+		return channel;
+	},
+	stopChannel:function(ch) {
+		if (this.audioContext&&this.channels[ch]) {
+			this.channels[ch].stop();
+			delete this.channels[ch];
+		}
+	},
+	stopAudio:function(ch) {
+		if (this.audioContext) {
+			if (!ch) ch=this.channels;
+			for (var channel in ch) this.stopChannel(channel);
+		}
+	},
+	playAudio:function(hwchannel,audio,channel) {
+		if (this.audioContext&&audio&&channel) {
+			// Generate previous requested samples on-the-fly
+			if (!audio.buffer)
+				if (audio.noise) {						
+					this.generateNoise(audio.parms,audio.frequency,audio);						
+				}
+			if (audio.buffer) {
+				if (!hwchannel.audioOut)
+					this.createAudioChannel(hwchannel.volume,hwchannel);
+				var source = this.audioContext.createBufferSource();
+				this.stopChannel(channel);
+			  	source.buffer = audio.buffer;
+			  	source.connect(hwchannel.audioOut);
+				source.start(0);
+				this.channels[channel]=source;
+			}
+		}		
+	}
+}
+
+function Audio() {
+
+	var
+		locks={},
+		channels={
+			sfx:AudioEngine.createAudioChannel(0.9),
+			hiscore:AudioEngine.createAudioChannel(0.9),
+			low:AudioEngine.createAudioChannel(0.1)
+		},
+		sounds={
+			card:{channel:channels.low,sound:AudioEngine.generateNoise({"wave":"whitenoise","attack":0.012,"sustain":0.024,"decay":0.021,"release":0.068,"frequency":1600,"tremoloFrequency":32,"pitch":0.002,"frequencyJump1amount":0.02,"bitCrush":0,"bitCrushSweep":0,"limit":0.6,"tremoloDepth":0,"frequencyJump1onset":0,"frequencyJump2onset":0,"frequencyJump2amount":0})},
+			
+			bonus:{channel:channels.sfx,sound:AudioEngine.generateNoise({"wave":"breaker","attack":0.021,"sustain":0.2,"decay":0.15,"release":0.2,"pitch":0.0003,"frequencyJump1onset":0.17,"frequencyJump1amount":-0.04,"bitCrush":0,"bitCrushSweep":0,"limit":0.6,"frequency":850,"tremoloFrequency":0,"tremoloDepth":0,"frequencyJump2onset":0,"frequencyJump2amount":0})},
+			select:{channel:channels.sfx,sound:AudioEngine.generateNoise({"wave":"square","attack":0.027,"sustain":0.06,"decay":0.015,"release":0.2,"frequencyJump1onset":0.2,"frequencyJump1amount":0.14,"bitCrush":0,"bitCrushSweep":0,"limit":0.6,"frequency":850,"tremoloFrequency":0,"tremoloDepth":0,"frequencyJump2onset":0,"frequencyJump2amount":0,"pitch":0})},
+			fall:{channel:channels.sfx,sound:AudioEngine.generateNoise({"wave":"sine","attack":0.15,"sustain":0.2,"decay":0.15,"release":0.2,"pitch":-0.0008,"bitCrush":0,"bitCrushSweep":0,"limit":0.6,"frequency":850,"tremoloFrequency":0,"tremoloDepth":0,"frequencyJump1onset":0,"frequencyJump1amount":0,"frequencyJump2onset":0,"frequencyJump2amount":0})},
+			break:{channel:channels.sfx,sound:AudioEngine.generateNoise({"wave":"whitenoise","attack":0.021,"sustain":0.052,"decay":0.018,"release":0.088,"frequency":1195,"pitch":0.0001,"bitCrush":0,"bitCrushSweep":0,"limit":0.6,"tremoloFrequency":0,"tremoloDepth":0,"frequencyJump1onset":0,"frequencyJump1amount":0,"frequencyJump2onset":0,"frequencyJump2amount":0})},
+			laser:{channel:channels.sfx,sound:AudioEngine.generateNoise({"wave":"saw","attack":0.015,"sustain":0.2,"decay":0.15,"release":0.2,"pitch":-0.0013,"bitCrush":0,"bitCrushSweep":0,"limit":0.6,"frequency":850,"tremoloFrequency":0,"tremoloDepth":0,"frequencyJump1onset":0,"frequencyJump1amount":0,"frequencyJump2onset":0,"frequencyJump2amount":0})},
+			explosion:{channel:channels.sfx,sound:AudioEngine.generateNoise({"wave":"whitenoise","attack":0.012,"sustain":0.2,"decay":0.15,"release":0.2,"pitch":-0.0015,"bitCrush":0,"bitCrushSweep":0,"limit":0.6,"frequency":850,"tremoloFrequency":0,"tremoloDepth":0,"frequencyJump1onset":0,"frequencyJump1amount":0,"frequencyJump2onset":0,"frequencyJump2amount":0})},
+			beep:{channel:channels.sfx,sound:AudioEngine.generateNoise({"wave":"square","attack":0.009,"sustain":0.192,"limit":0.364,"decay":0.084,"release":0.288,"tremoloFrequency":35,"tremoloDepth":0.69,"pitch":0.0003,"bitCrush":0,"bitCrushSweep":0,"frequency":850,"frequencyJump1onset":0,"frequencyJump1amount":0,"frequencyJump2onset":0,"frequencyJump2amount":0})},
+			lose:{channel:channels.sfx,sound:AudioEngine.generateNoise({"wave":"square","attack":0.012,"sustain":0.144,"decay":0.024,"release":0.2,"pitch":0.0009,"frequencyJump1onset":0.2,"frequencyJump1amount":-0.7,"bitCrush":0,"bitCrushSweep":0,"limit":0.6,"frequency":850,"tremoloFrequency":0,"tremoloDepth":0,"frequencyJump2onset":0,"frequencyJump2amount":0})},
+			squash:{channel:channels.sfx,sound:AudioEngine.generateNoise({"wave":"triangle","attack":0.012,"sustain":0.072,"decay":0.003,"release":0.044,"frequency":475,"pitch":-0.0002,"frequencyJump1onset":0.14,"frequencyJump1amount":0.3,"bitCrush":0,"bitCrushSweep":0,"limit":0.6,"tremoloFrequency":0,"tremoloDepth":0,"frequencyJump2onset":0,"frequencyJump2amount":0})},
+			eat:{channel:channels.sfx,sound:AudioEngine.generateNoise({"wave":"square","attack":0.003,"sustain":0.028,"decay":0.015,"release":0.064,"frequency":175,"pitch":-0.002,"frequencyJump1amount":0.58,"frequencyJump2onset":0.18,"bitCrush":0,"bitCrushSweep":0,"limit":0.6,"tremoloFrequency":0,"tremoloDepth":0,"frequencyJump1onset":0,"frequencyJump2amount":0})},
+			powerup:{channel:channels.sfx,sound:AudioEngine.generateNoise({"wave":"tangent","attack":0.015,"sustain":0.056,"decay":0.201,"release":0.268,"frequency":370,"frequencyJump1onset":0.08,"frequencyJump1amount":0.2,"frequencyJump2onset":0.12,"frequencyJump2amount":0.22,"bitCrush":0,"bitCrushSweep":0,"limit":0.6,"tremoloFrequency":0,"tremoloDepth":0,"pitch":0})},
+
+			hiscore:{channel:channels.hiscore,sound:AudioEngine.generateNoise({"wave":"tangent","attack":0.15,"sustain":0.2,"decay":0.15,"release":0.2,"frequency":415,"frequencyJump1onset":0.17,"frequencyJump1amount":0.34,"frequencyJump2onset":0.33,"frequencyJump2amount":0.08,"bitCrush":0,"bitCrushSweep":0,"limit":0.6,"tremoloFrequency":0,"tremoloDepth":0,"pitch":0})}
+		};
+
+	this.playOnce=function(id) {
+		if (!locks[id]) {
+			locks[id]=1;
+			this.play(id);
+		}
+	}
+
+	this.unlockPlayOnce=function() {
+		locks={};
+	}
+
+	this.play=function(id) {
+		AudioEngine.request();
+		AudioEngine.playAudio(sounds[id].channel,sounds[id].sound,id);
+	}
+
+}
+
+var STATEMANAGER={
+	manageSignal:function(signal) {
+		switch (signal.action) {
+			case "title":{
+				var title=new Title();
+				title.run();
+				break;
+			}
+			case "manual":{
+				var manual=new Manual();
+				manual.run();
+				break;
+			}
+			case "selectGame":{
+				var gameSelector=new GameSelector();
+				gameSelector.run();
+				break;
+			}
+			case "continue":{
+				var match=new Match(signal.game,true);
+				match.run();
+				break;
+			}
+			case "new":{
+				var match=new Match(signal.game,false);
+				match.run();
+				break;
+			}
+		}
+	}
+}
+
+
+function initializeGlobals() {
+	AUDIO=new Audio();
+	STORAGE=new Storage();
+	SCREEN=new MyCanvas(400,640,true);
+	DIMMER=new Dimmer(SCREEN.width,SCREEN.height,PALETTE.black);
+	CARDS=new Cards();
+	UI=new Ui();
+
+	RESOURCES={
+		sprites:document.getElementById("sprites")
+	};
+	FONTS={
+		small:{
+			sprites:RESOURCES.sprites,
+			x1:0,y1:606,
+			letterWidth:10,
+			letterHeight:10,
+			letterSpacing:8
+		},
+		large:{
+			sprites:RESOURCES.sprites,
+			x1:0,y1:687,
+			letterWidth:18,
+			letterHeight:18,
+			letterSpacing:16
+		}
+	};
+	FONTCOLOR={
+		red:0,
+		green:1,
+		blue:2,
+		white:3,
+		purple:4,
+		cyan:5,
+		yellow:6,
+		gray:7
+	};	
+	CARDSIZES={
+		small:{depth:2,width:34,height:36,backgroundX:71,backgroundY:73,labelX:0,labelY:0,labelWidth:32,labelHeight:32,labelXGap:33,labelPositions:[{x:1,y:1}]},
+		normalDouble:{depth:3,width:70,height:92,backgroundX:0,backgroundY:73,labelX:0,labelY:33,labelXGap:65,labelWidth:64,labelHeight:39, labelPositions:[{x:3,y:3},{x:3,y:48}]},
+		normalSingle:{depth:3,width:70,height:92,backgroundX:0,backgroundY:73,labelX:0,labelY:33,labelXGap:65,labelWidth:64,labelHeight:39, labelPositions:[{x:3,y:25}]}
+	};
+	
+}
+
+
+
+
+
+
+
+
+function run() {
+
+	initializeGlobals();
+	initializeGames();
+	STATEMANAGER.manageSignal({action:"title"});
+	
+
+	//var match=new Match(GAMES[0],false);
+	//match.run();
+
+	
+
+
+
+}
+
+</script>
+</html>
